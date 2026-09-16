@@ -2,13 +2,17 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.contrib.auth.models import User
-from .models import Expense, Income, Budget, CategoryBudget
-from .serializers import ExpenseSerializer, IncomeSerializer, BudgetSerializer
+from .models import Expense, Income, Budget, CategoryBudget, SavingsGoal
+from .serializers import (
+    ExpenseSerializer, 
+    IncomeSerializer, 
+    BudgetSerializer,
+    SavingsGoalSerializer
+)
 
-# 1. User Registration View (Zero Token Authentication Required)
 class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]
-    authentication_classes = []  # Expired token ki wajah se register block nahi hoga
+    authentication_classes = []
 
     def post(self, request):
         username = request.data.get('username')
@@ -24,7 +28,6 @@ class RegisterView(APIView):
         return Response({'message': 'User registered successfully'}, status=status.HTTP_201_CREATED)
 
 
-# 2. Expense ViewSet (Strict 6 Categories)
 class ExpenseViewSet(viewsets.ModelViewSet):
     serializer_class = ExpenseSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -36,7 +39,6 @@ class ExpenseViewSet(viewsets.ModelViewSet):
         serializer.save(user=self.request.user)
 
 
-# 3. Income ViewSet (Strict 3 Sources)
 class IncomeViewSet(viewsets.ModelViewSet):
     serializer_class = IncomeSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -48,7 +50,6 @@ class IncomeViewSet(viewsets.ModelViewSet):
         serializer.save(user=self.request.user)
 
 
-# 4. Budget ViewSet
 class BudgetViewSet(viewsets.ModelViewSet):
     serializer_class = BudgetSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -94,7 +95,19 @@ class BudgetViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
-# 5. Dashboard Summary View
+# Naya SavingsGoalViewSet
+class SavingsGoalViewSet(viewsets.ModelViewSet):
+    serializer_class = SavingsGoalSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        # Strict User Ownership Isolation
+        return SavingsGoal.objects.filter(user=self.request.user).order_by('-created_at')
+
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+
 class DashboardSummaryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -121,7 +134,7 @@ class DashboardSummaryView(APIView):
             })
 
         for i in incomes:
-            src = i.source or getattr(i, 'income_type', 'Pocket Money')
+            src = i.income_type or getattr(i, 'source', 'Pocket Money')
             combined_activity.append({
                 'id': f"inc_{i.id}",
                 'original_id': i.id,
@@ -130,7 +143,7 @@ class DashboardSummaryView(APIView):
                 'category': src,
                 'type': 'INCOME',
                 'date': str(i.date),
-                'created_at': e.created_at.isoformat() if hasattr(e, 'created_at') else ''
+                'created_at': i.created_at.isoformat() if hasattr(i, 'created_at') else ''
             })
 
         combined_activity.sort(key=lambda x: x['date'], reverse=True)

@@ -1,5 +1,13 @@
 from rest_framework import serializers
-from .models import Expense, Income, Budget, CategoryBudget, EXPENSE_CATEGORIES, INCOME_SOURCES
+from .models import (
+    Expense, 
+    Income, 
+    Budget, 
+    CategoryBudget, 
+    SavingsGoal,
+    EXPENSE_CATEGORIES, 
+    INCOME_SOURCES
+)
 
 class ExpenseSerializer(serializers.ModelSerializer):
     class Meta:
@@ -31,7 +39,6 @@ class IncomeSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at']
 
     def validate(self, data):
-        # Frontend se chahe source aaye ya income_type, sahi value pick karein
         source_val = data.get('income_type') or data.get('source')
         if not source_val:
             raise serializers.ValidationError({"income_type": ["This field is required."]})
@@ -52,7 +59,6 @@ class IncomeSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        # Model mein jo actual column hai (income_type ya source) sirf wahi pass karein
         model_fields = [f.name for f in Income._meta.get_fields()]
         val = validated_data.pop('income_type', None) or validated_data.pop('source', None)
 
@@ -61,7 +67,6 @@ class IncomeSerializer(serializers.ModelSerializer):
         elif 'source' in model_fields:
             validated_data['source'] = val
 
-        # Database mein sirf wahi fields bhejenge jo model mein sach mein exist karte hain
         clean_data = {k: v for k, v in validated_data.items() if k in model_fields}
         return Income.objects.create(**clean_data)
 
@@ -82,7 +87,6 @@ class IncomeSerializer(serializers.ModelSerializer):
         return instance
 
     def to_representation(self, instance):
-        # Frontend ko display ke liye dono fields milenge
         data = super().to_representation(instance)
         val = getattr(instance, 'income_type', None) or getattr(instance, 'source', None)
         data['source'] = val
@@ -145,3 +149,46 @@ class BudgetSerializer(serializers.ModelSerializer):
             )
 
         return budget
+
+
+# Savings Goal Serializer with Progress % and Completion Logic
+class SavingsGoalSerializer(serializers.ModelSerializer):
+    progress_percentage = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SavingsGoal
+        fields = ['id', 'name', 'target_amount', 'current_amount', 'is_completed', 'progress_percentage', 'created_at']
+        read_only_fields = ['id', 'is_completed', 'progress_percentage', 'created_at']
+
+    def get_progress_percentage(self, obj):
+        if obj.target_amount and obj.target_amount > 0:
+            percentage = (float(obj.current_amount) / float(obj.target_amount)) * 100
+            return round(min(percentage, 100.0), 1)
+        return 0.0
+
+    def validate_name(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("Goal name cannot be empty.")
+        return value.strip()
+
+    def validate_target_amount(self, value):
+        if float(value) <= 0:
+            raise serializers.ValidationError("Target amount must be greater than 0.")
+        return value
+
+    def validate_current_amount(self, value):
+        if float(value) < 0:
+            raise serializers.ValidationError("Saved amount cannot be negative.")
+        return value
+
+    def create(self, validated_data):
+        current = float(validated_data.get('current_amount', 0))
+        target = float(validated_data.get('target_amount', 0))
+        validated_data['is_completed'] = current >= target
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        current = float(validated_data.get('current_amount', instance.current_amount))
+        target = float(validated_data.get('target_amount', instance.target_amount))
+        validated_data['is_completed'] = current >= target
+        return super().update(instance, validated_data)

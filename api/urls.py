@@ -5,6 +5,7 @@ from .views import (
     ExpenseViewSet, 
     IncomeViewSet, 
     BudgetViewSet, 
+    SavingsGoalViewSet,
     DashboardSummaryView,
     RegisterView
 )
@@ -13,6 +14,7 @@ router = DefaultRouter()
 router.register(r'expenses', ExpenseViewSet, basename='expense')
 router.register(r'incomes', IncomeViewSet, basename='income')
 router.register(r'budgets', BudgetViewSet, basename='budget')
+router.register(r'savings-goals', SavingsGoalViewSet, basename='savings-goal')
 
 urlpatterns = [
     # Auth Endpoints

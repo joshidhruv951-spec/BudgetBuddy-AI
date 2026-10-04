@@ -18,6 +18,14 @@ INCOME_SOURCES = [
     ('Freelance Income', 'Freelance Income'),
 ]
 
+# Notification Types
+NOTIFICATION_TYPES = [
+    ('BUDGET_ALERT', 'Budget Alert'),
+    ('SAVINGS_MILESTONE', 'Savings Milestone'),
+    ('SAVINGS_REMINDER', 'Savings Reminder'),
+    ('MONTHLY_REPORT', 'Monthly Report'),
+]
+
 class Expense(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='expenses')
     title = models.CharField(max_length=200)
@@ -68,7 +76,6 @@ class CategoryBudget(models.Model):
         return f"{self.category}: ₹{self.allocated_amount}"
 
 
-# 5. Naya Savings Goal Model
 class SavingsGoal(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='savings_goals')
     name = models.CharField(max_length=200)
@@ -80,3 +87,19 @@ class SavingsGoal(models.Model):
 
     def __str__(self):
         return f"{self.name} - ₹{self.current_amount}/₹{self.target_amount} ({self.user.username})"
+
+
+# Notification Model
+class Notification(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
+    notification_type = models.CharField(max_length=50, choices=NOTIFICATION_TYPES)
+    title = models.CharField(max_length=200, default='Alert')
+    message = models.TextField()
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.user.username} - {self.notification_type} - {self.title}"

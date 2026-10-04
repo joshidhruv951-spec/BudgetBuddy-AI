@@ -20,7 +20,6 @@ const INCOME_COLORS = {
   'Freelance Income': '#6366f1'
 };
 
-// Reusable Zero-Dependency SVG Donut Chart Component
 function DonutChartCard({ title, total, data, emptyText, centerLabel = "TOTAL" }) {
   const radius = 55;
   const circumference = 2 * Math.PI * radius;
@@ -29,14 +28,13 @@ function DonutChartCard({ title, total, data, emptyText, centerLabel = "TOTAL" }
   return (
     <div style={{ backgroundColor: '#131b2e', border: '1px solid #1e293b', padding: '20px', borderRadius: '12px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', flex: 1, minWidth: '280px' }}>
       <div>
-        <h3 style={{ margin: '0 0 16px', fontSize: '16px', color: '#f8fafc', fontWeight: '700' }}>{title}</h3>
+        <h3 style={{ margin: '0 0 16px', fontSize: '15px', color: '#f8fafc', fontWeight: '700' }}>{title}</h3>
         {data.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '36px 0', color: '#64748b', fontSize: '13px' }}>
             {emptyText}
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
-            {/* SVG Ring */}
             <div style={{ position: 'relative', width: '140px', height: '140px' }}>
               <svg width="140" height="140" viewBox="0 0 140 140" style={{ transform: 'rotate(-90deg)' }}>
                 <circle cx="70" cy="70" r={radius} fill="none" stroke="#1e293b" strokeWidth="16" />
@@ -61,14 +59,12 @@ function DonutChartCard({ title, total, data, emptyText, centerLabel = "TOTAL" }
                   );
                 })}
               </svg>
-              {/* Center Text */}
               <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
                 <span style={{ fontSize: '10px', color: '#94a3b8', fontWeight: 'bold' }}>{centerLabel}</span>
                 <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#f8fafc' }}>₹{total.toLocaleString()}</span>
               </div>
             </div>
 
-            {/* Legends */}
             <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {data.map((item) => (
                 <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#0f172a', padding: '6px 10px', borderRadius: '6px', border: '1px solid #1e293b', fontSize: '12px' }}>
@@ -94,8 +90,12 @@ function Dashboard() {
   const [expenses, setExpenses] = useState([]);
   const [incomes, setIncomes] = useState([]);
   const [savingsGoals, setSavingsGoals] = useState([]);
+  const [notifications, setNotifications] = useState([]);
   const [budget, setBudget] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Notification Dropdown
+  const [showNotifications, setShowNotifications] = useState(false);
 
   // Forms
   const [formType, setFormType] = useState('EXPENSE');
@@ -121,15 +121,17 @@ function Dashboard() {
 
   const loadData = async () => {
     try {
-      const [expRes, incRes, budRes, goalRes] = await Promise.all([
-        api.get('expenses/'),
-        api.get('incomes/'),
-        api.get('budgets/'),
-        api.get('savings-goals/')
-      ]);
-      setExpenses(expRes.data);
-      setIncomes(incRes.data);
-      setSavingsGoals(goalRes.data);
+      const expRes = await api.get('expenses/').catch(() => ({ data: [] }));
+      const incRes = await api.get('incomes/').catch(() => ({ data: [] }));
+      const budRes = await api.get('budgets/').catch(() => ({ data: [] }));
+      const goalRes = await api.get('savings-goals/').catch(() => ({ data: [] }));
+      const notifRes = await api.get('notifications/').catch(() => ({ data: [] }));
+
+      setExpenses(expRes.data || []);
+      setIncomes(incRes.data || []);
+      setSavingsGoals(goalRes.data || []);
+      setNotifications(notifRes.data || []);
+
       if (budRes.data && budRes.data.length > 0) {
         setBudget(budRes.data[0]);
       }
@@ -148,18 +150,31 @@ function Dashboard() {
     loadData();
   }, []);
 
+  // Reliable Real-Time Calculations
   const totalIncome = incomes.reduce((acc, curr) => acc + parseFloat(curr.amount || 0), 0);
   const totalExpenses = expenses.reduce((acc, curr) => acc + parseFloat(curr.amount || 0), 0);
   const remainingBalance = totalIncome - totalExpenses;
+  const budgetAmount = budget ? parseFloat(budget.total_amount) : 0;
+  const budgetUtilization = budgetAmount > 0 ? Math.round((totalExpenses / budgetAmount) * 100) : 0;
+  const savingsRate = totalIncome > 0 ? Math.max(0, Math.round(((totalIncome - totalExpenses) / totalIncome) * 100)) : 0;
 
-  // Chart 1 Data: Expense Breakdown
+  // Filtered notifications: agar expense budget ke 80% se kam hai toh purana fake warning filter kar dega
+  const validNotifications = notifications.filter((n) => {
+    if (n.notification_type === 'BUDGET_ALERT' && budgetUtilization < 80) {
+      return false;
+    }
+    return true;
+  });
+  const unreadCount = validNotifications.filter((n) => !n.is_read).length;
+
+  // Chart 1: Expense Breakdown
   const expenseChartData = EXPENSE_CATEGORIES.map((cat) => {
     const sum = expenses.filter((e) => e.category === cat).reduce((acc, e) => acc + parseFloat(e.amount || 0), 0);
     const pct = totalExpenses > 0 ? (sum / totalExpenses) * 100 : 0;
     return { label: cat, amount: sum, percentage: Math.round(pct), color: EXPENSE_COLORS[cat] };
   }).filter((item) => item.amount > 0);
 
-  // Chart 2 Data: Income Breakdown
+  // Chart 2: Income Breakdown
   const incomeChartData = INCOME_SOURCES.map((src) => {
     const sum = incomes
       .filter((i) => (i.income_type === src || i.source === src))
@@ -168,27 +183,51 @@ function Dashboard() {
     return { label: src, amount: sum, percentage: Math.round(pct), color: INCOME_COLORS[src] };
   }).filter((item) => item.amount > 0);
 
-  // Chart 3 Data: Total Cash Flow Comparison (Spent vs Remaining)
+  // Chart 3: Cash Flow
   const cashFlowChartData = [];
   if (totalIncome > 0) {
     const spentPct = Math.round((Math.min(totalExpenses, totalIncome) / totalIncome) * 100);
     const savedPct = Math.max(0, 100 - spentPct);
-    cashFlowChartData.push({
-      label: 'Spent',
-      amount: totalExpenses,
-      percentage: spentPct,
-      color: '#ef4444'
-    });
+    cashFlowChartData.push({ label: 'Spent', amount: totalExpenses, percentage: spentPct, color: '#ef4444' });
     if (remainingBalance > 0) {
-      cashFlowChartData.push({
-        label: 'Net Balance',
-        amount: remainingBalance,
-        percentage: savedPct,
-        color: '#10b981'
-      });
+      cashFlowChartData.push({ label: 'Net Balance', amount: remainingBalance, percentage: savedPct, color: '#10b981' });
     }
   }
 
+  // Monthly Trends (Last 6 Months calculation dynamically from user's transactions)
+  const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const currentDateObj = new Date();
+  const monthlyTrends = [];
+
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(currentDateObj.getFullYear(), currentDateObj.getMonth() - i, 1);
+    const m = d.getMonth();
+    const y = d.getFullYear();
+
+    const mInc = incomes
+      .filter((inc) => {
+        const incDate = new Date(inc.date);
+        return incDate.getMonth() === m && incDate.getFullYear() === y;
+      })
+      .reduce((acc, inc) => acc + parseFloat(inc.amount || 0), 0);
+
+    const mExp = expenses
+      .filter((exp) => {
+        const expDate = new Date(exp.date);
+        return expDate.getMonth() === m && expDate.getFullYear() === y;
+      })
+      .reduce((acc, exp) => acc + parseFloat(exp.amount || 0), 0);
+
+    monthlyTrends.push({
+      month: `${monthNames[m]} '${String(y).slice(-2)}`,
+      income: mInc,
+      expense: mExp
+    });
+  }
+
+  const maxTrendVal = Math.max(...monthlyTrends.map((t) => Math.max(t.income, t.expense)), 1000);
+
+  // Edit handler
   const handleEdit = (item) => {
     setEditingId(item.id);
     setEditingType(item.type);
@@ -326,6 +365,63 @@ function Dashboard() {
     }
   };
 
+  // Instant Client-Side CSV Export (100% Reliable, Zero Network Dependency)
+  const handleExportCSV = () => {
+    try {
+      let csvContent = "data:text/csv;charset=utf-8,";
+      csvContent += "BudgetBuddy Financial Summary Report\r\n";
+      csvContent += `Generated Date,${new Date().toLocaleString()}\r\n\r\n`;
+
+      csvContent += "METRICS,AMOUNT (INR)\r\n";
+      csvContent += `Total Income,${totalIncome}\r\n`;
+      csvContent += `Total Expenses,${totalExpenses}\r\n`;
+      csvContent += `Remaining Balance,${remainingBalance}\r\n`;
+      csvContent += `Monthly Budget,${budgetAmount}\r\n`;
+      csvContent += `Savings Rate,${savingsRate}%\r\n\r\n`;
+
+      csvContent += "TRANSACTION LOGS\r\n";
+      csvContent += "Date,Type,Title / Source,Category,Amount (INR)\r\n";
+
+      const allSorted = [
+        ...incomes.map((i) => ({ date: i.date, type: 'INCOME', title: i.income_type || i.source, cat: 'Income', amt: `+${i.amount}` })),
+        ...expenses.map((e) => ({ date: e.date, type: 'EXPENSE', title: e.title, cat: e.category, amt: `-${e.amount}` }))
+      ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      allSorted.forEach((row) => {
+        csvContent += `"${row.date}","${row.type}","${row.title}","${row.cat}","${row.amt}"\r\n`;
+      });
+
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", `BudgetBuddy_Financial_Report_${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      alert('Failed to export CSV');
+    }
+  };
+
+  // Notification Actions
+  const handleMarkAsRead = async (id) => {
+    try {
+      await api.post(`notifications/${id}/mark_read/`);
+      loadData();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleClearAllNotifications = async () => {
+    try {
+      await api.post(`notifications/clear_all/`);
+      setNotifications([]);
+    } catch (err) {
+      setNotifications([]);
+    }
+  };
+
   const activities = [
     ...expenses.map((e) => ({ ...e, type: 'EXPENSE', displayTitle: e.title })),
     ...incomes.map((i) => ({ ...i, type: 'INCOME', displayTitle: i.income_type || i.source }))
@@ -346,7 +442,7 @@ function Dashboard() {
   if (loading) {
     return (
       <div style={{ backgroundColor: '#090d16', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#94a3b8', fontSize: '18px', fontFamily: 'system-ui, sans-serif' }}>
-        Loading BudgetBuddy Dark Mode...
+        Loading BudgetBuddy Dashboard...
       </div>
     );
   }
@@ -354,29 +450,149 @@ function Dashboard() {
   return (
     <div style={{ backgroundColor: '#090d16', minHeight: '100vh', fontFamily: 'system-ui, sans-serif', padding: '24px', color: '#f8fafc' }}>
       {/* Header */}
-      <div style={{ maxWidth: '1200px', margin: '0 auto 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ maxWidth: '1200px', margin: '0 auto 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
         <div>
           <h1 style={{ margin: 0, color: '#f8fafc', fontSize: '26px', fontWeight: '800' }}>BudgetBuddy</h1>
-          <p style={{ margin: '4px 0 0', color: '#94a3b8', fontSize: '14px' }}>Expense, Income, Budget & Visual Analytics</p>
+          <p style={{ margin: '4px 0 0', color: '#94a3b8', fontSize: '14px' }}>Analytics Cockpit & Financial Dashboard</p>
         </div>
-        <button
-          onClick={() => { localStorage.clear(); navigate('/login'); }}
-          style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}
-        >
-          Logout
-        </button>
+        
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
+          {/* Export Report */}
+          <button
+            onClick={handleExportCSV}
+            title="Download CSV Report"
+            style={{
+              backgroundColor: '#1e293b',
+              border: '1px solid #334155',
+              color: '#38bdf8',
+              padding: '8px 14px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: '13px'
+            }}
+          >
+            📥 Export CSV
+          </button>
+
+          {/* Notification Bell */}
+          <button
+            onClick={() => setShowNotifications(!showNotifications)}
+            title="Notifications"
+            style={{
+              position: 'relative',
+              backgroundColor: '#131b2e',
+              border: '1px solid #1e293b',
+              padding: '8px 12px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              color: '#f8fafc',
+              fontSize: '16px'
+            }}
+          >
+            🔔
+            {unreadCount > 0 && (
+              <span
+                style={{
+                  position: 'absolute',
+                  top: '-5px',
+                  right: '-5px',
+                  backgroundColor: '#ef4444',
+                  color: '#fff',
+                  borderRadius: '10px',
+                  padding: '2px 6px',
+                  fontSize: '11px',
+                  fontWeight: 'bold'
+                }}
+              >
+                {unreadCount}
+              </span>
+            )}
+          </button>
+
+          {/* Notification Dropdown Panel */}
+          {showNotifications && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '46px',
+                right: '90px',
+                width: '340px',
+                backgroundColor: '#131b2e',
+                border: '1px solid #334155',
+                borderRadius: '10px',
+                boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                zIndex: 1000,
+                maxHeight: '400px',
+                overflowY: 'auto'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #1e293b' }}>
+                <span style={{ fontWeight: 'bold', fontSize: '14px', color: '#f8fafc' }}>Notifications</span>
+                <button
+                  onClick={handleClearAllNotifications}
+                  style={{ background: 'none', border: 'none', color: '#ef4444', fontSize: '11px', cursor: 'pointer', padding: 0 }}
+                >
+                  Clear all
+                </button>
+              </div>
+
+              {validNotifications.length === 0 ? (
+                <div style={{ padding: '20px', textAlign: 'center', color: '#64748b', fontSize: '13px' }}>
+                  No active notifications.
+                </div>
+              ) : (
+                validNotifications.map((n) => (
+                  <div
+                    key={n.id}
+                    style={{
+                      padding: '12px 16px',
+                      borderBottom: '1px solid #1e293b',
+                      backgroundColor: n.is_read ? '#131b2e' : '#1e293b44',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '4px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '13px', fontWeight: 'bold', color: n.notification_type === 'BUDGET_ALERT' ? '#f87171' : '#34d399' }}>
+                        {n.title}
+                      </span>
+                      {!n.is_read && (
+                        <button
+                          onClick={() => handleMarkAsRead(n.id)}
+                          style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '11px', cursor: 'pointer' }}
+                        >
+                          ✓ Read
+                        </button>
+                      )}
+                    </div>
+                    <span style={{ fontSize: '12px', color: '#cbd5e1', lineHeight: '1.4' }}>{n.message}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          <button
+            onClick={() => { localStorage.clear(); navigate('/login'); }}
+            style={{ backgroundColor: '#dc2626', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}
+          >
+            Logout
+          </button>
+        </div>
       </div>
 
       <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        {/* Top Summary Cards */}
+        {/* Top Summary Cards (Clean: No + or - signs) */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
           <div style={{ backgroundColor: '#131b2e', border: '1px solid #1e293b', padding: '20px', borderRadius: '12px' }}>
             <span style={{ color: '#4ade80', fontSize: '12px', fontWeight: 'bold', letterSpacing: '0.5px' }}>TOTAL INCOME</span>
-            <div style={{ fontSize: '26px', fontWeight: 'bold', color: '#f8fafc', marginTop: '6px' }}>+ ₹{totalIncome.toLocaleString()}</div>
+            <div style={{ fontSize: '26px', fontWeight: 'bold', color: '#f8fafc', marginTop: '6px' }}>₹{totalIncome.toLocaleString()}</div>
           </div>
           <div style={{ backgroundColor: '#131b2e', border: '1px solid #1e293b', padding: '20px', borderRadius: '12px' }}>
             <span style={{ color: '#f87171', fontSize: '12px', fontWeight: 'bold', letterSpacing: '0.5px' }}>TOTAL EXPENSES</span>
-            <div style={{ fontSize: '26px', fontWeight: 'bold', color: '#f8fafc', marginTop: '6px' }}>- ₹{totalExpenses.toLocaleString()}</div>
+            <div style={{ fontSize: '26px', fontWeight: 'bold', color: '#f8fafc', marginTop: '6px' }}>₹{totalExpenses.toLocaleString()}</div>
           </div>
           <div style={{ backgroundColor: '#131b2e', border: '1px solid #1e293b', padding: '20px', borderRadius: '12px' }}>
             <span style={{ color: '#60a5fa', fontSize: '12px', fontWeight: 'bold', letterSpacing: '0.5px' }}>REMAINING BALANCE</span>
@@ -392,41 +608,94 @@ function Dashboard() {
               </button>
             </div>
             <div style={{ fontSize: '26px', fontWeight: 'bold', color: '#f8fafc', marginTop: '6px' }}>
-              {budget ? `₹${parseFloat(budget.total_amount).toLocaleString()}` : 'Not Set'}
+              {budgetAmount > 0 ? `₹${budgetAmount.toLocaleString()}` : 'Not Set'}
             </div>
           </div>
         </div>
 
-        {/* 3 Dedicated Financial Analytics Charts */}
-        <div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
-            {/* Chart 1: Expense Distribution */}
-            <DonutChartCard
-              title="📉 Expense Categories"
-              total={totalExpenses}
-              data={expenseChartData}
-              centerLabel="SPENT"
-              emptyText="No expenses recorded yet."
-            />
-
-            {/* Chart 2: Income Sources Breakdown */}
-            <DonutChartCard
-              title="📈 Income Sources"
-              total={totalIncome}
-              data={incomeChartData}
-              centerLabel="EARNED"
-              emptyText="No income recorded yet."
-            />
-
-            {/* Chart 3: Total Flow (Inflow vs Outflow) */}
-            <DonutChartCard
-              title="⚖️ Total Cash Flow (In vs Out)"
-              total={totalIncome}
-              data={cashFlowChartData}
-              centerLabel="INFLOW"
-              emptyText="Record income to analyze cash flow."
-            />
+        {/* Live Financial Health Strip */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '14px', backgroundColor: '#131b2e', border: '1px solid #1e293b', padding: '16px 20px', borderRadius: '12px' }}>
+          <div>
+            <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '600' }}>SAVINGS RATE</span>
+            <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#10b981', marginTop: '4px' }}>{savingsRate}%</div>
           </div>
+          <div>
+            <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '600' }}>BUDGET UTILIZATION</span>
+            <div style={{ fontSize: '18px', fontWeight: 'bold', color: budgetUtilization > 80 ? '#f87171' : '#38bdf8', marginTop: '4px' }}>
+              {budgetUtilization}%
+            </div>
+          </div>
+          <div>
+            <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '600' }}>ACTIVE SAVINGS GOALS</span>
+            <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#c084fc', marginTop: '4px' }}>
+              {savingsGoals.length} ({savingsGoals.filter((g) => g.is_completed).length} Completed)
+            </div>
+          </div>
+        </div>
+
+        {/* Monthly Income/Expense Trends Visualization */}
+        <div style={{ backgroundColor: '#131b2e', border: '1px solid #1e293b', padding: '24px', borderRadius: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '16px', color: '#f8fafc' }}>📈 Monthly Income vs Expense Trends</h3>
+              <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#94a3b8' }}>Multi-month cash flow comparison (Last 6 Months)</p>
+            </div>
+            <div style={{ display: 'flex', gap: '14px', fontSize: '12px' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#4ade80' }}>
+                <span style={{ width: '10px', height: '10px', backgroundColor: '#10b981', borderRadius: '2px' }} /> Income
+              </span>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#f87171' }}>
+                <span style={{ width: '10px', height: '10px', backgroundColor: '#ef4444', borderRadius: '2px' }} /> Expense
+              </span>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', height: '160px', padding: '10px 0', borderBottom: '1px solid #334155', gap: '12px' }}>
+            {monthlyTrends.map((trend) => {
+              const incHeight = (trend.income / maxTrendVal) * 120;
+              const expHeight = (trend.expense / maxTrendVal) * 120;
+              return (
+                <div key={trend.month} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', height: '100%', justifyContent: 'flex-end' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-end', gap: '6px', width: '100%', justifyContent: 'center' }}>
+                    <div
+                      title={`Income: ₹${trend.income.toLocaleString()}`}
+                      style={{ width: '14px', height: `${Math.max(incHeight, 4)}px`, backgroundColor: '#10b981', borderRadius: '4px 4px 0 0', transition: 'height 0.4s ease' }}
+                    />
+                    <div
+                      title={`Expense: ₹${trend.expense.toLocaleString()}`}
+                      style={{ width: '14px', height: `${Math.max(expHeight, 4)}px`, backgroundColor: '#ef4444', borderRadius: '4px 4px 0 0', transition: 'height 0.4s ease' }}
+                    />
+                  </div>
+                  <span style={{ fontSize: '11px', color: '#94a3b8', marginTop: '8px' }}>{trend.month}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 3 Donut Charts */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
+          <DonutChartCard
+            title="📉 Expense Categories"
+            total={totalExpenses}
+            data={expenseChartData}
+            centerLabel="SPENT"
+            emptyText="No expenses recorded yet."
+          />
+          <DonutChartCard
+            title="📈 Income Sources"
+            total={totalIncome}
+            data={incomeChartData}
+            centerLabel="EARNED"
+            emptyText="No income recorded yet."
+          />
+          <DonutChartCard
+            title="⚖️ Total Cash Flow (In vs Out)"
+            total={totalIncome}
+            data={cashFlowChartData}
+            centerLabel="INFLOW"
+            emptyText="Record income to analyze cash flow."
+          />
         </div>
 
         {/* Savings Goals Section */}
@@ -494,7 +763,7 @@ function Dashboard() {
           )}
         </div>
 
-        {/* Transaction Creation & Feed Grid */}
+        {/* Transaction Form & Activity List */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '24px' }}>
           {/* Form Card */}
           <div ref={formRef} style={{ backgroundColor: '#131b2e', border: '1px solid #1e293b', padding: '24px', borderRadius: '12px' }}>
@@ -608,7 +877,7 @@ function Dashboard() {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <span style={{ fontWeight: 'bold', color: a.type === 'EXPENSE' ? '#f87171' : '#4ade80' }}>
-                        {a.type === 'EXPENSE' ? `- ₹${parseFloat(a.amount).toLocaleString()}` : `+ ₹${parseFloat(a.amount).toLocaleString()}`}
+                        ₹{parseFloat(a.amount).toLocaleString()}
                       </span>
                       <button
                         onClick={() => handleEdit(a)}

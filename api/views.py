@@ -1,14 +1,95 @@
+import csv
+import datetime
+from django.http import HttpResponse
 from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.decorators import action
 from django.contrib.auth.models import User
-from .models import Expense, Income, Budget, CategoryBudget, SavingsGoal
+from .models import Expense, Income, Budget, CategoryBudget, SavingsGoal, Notification, EXPENSE_CATEGORIES
 from .serializers import (
     ExpenseSerializer, 
     IncomeSerializer, 
     BudgetSerializer,
-    SavingsGoalSerializer
+    SavingsGoalSerializer,
+    NotificationSerializer
 )
+
+# Intelligent Auto-Reconciling Notification Trigger
+def check_and_create_budget_alert(user):
+    budget = Budget.objects.filter(user=user).order_by('-year', '-month').first()
+    if not budget or float(budget.total_amount) <= 0:
+        return
+
+    # Total expenses for active tracking
+    now = datetime.date.today()
+    total_exp = sum(
+        float(e.amount) for e in Expense.objects.filter(user=user)
+    )
+    budget_limit = float(budget.total_amount)
+    ratio = total_exp / budget_limit
+
+    if ratio >= 1.0:
+        exists = Notification.objects.filter(
+            user=user,
+            notification_type='BUDGET_ALERT',
+            title='Budget Limit Exceeded!'
+        ).exists()
+        if not exists:
+            Notification.objects.create(
+                user=user,
+                notification_type='BUDGET_ALERT',
+                title='Budget Limit Exceeded!',
+                message=f"Alert: You have crossed 100% of your budget limit (₹{total_exp:,.2f} spent of ₹{budget_limit:,.2f})."
+            )
+    elif ratio >= 0.8:
+        exists = Notification.objects.filter(
+            user=user,
+            notification_type='BUDGET_ALERT',
+            title='Budget Warning (80% Reached)'
+        ).exists()
+        if not exists:
+            Notification.objects.create(
+                user=user,
+                notification_type='BUDGET_ALERT',
+                title='Budget Warning (80% Reached)',
+                message=f"Warning: You have reached 80% of your budget limit (₹{total_exp:,.2f} spent of ₹{budget_limit:,.2f})."
+            )
+    else:
+        # If expenses are below 80%, remove any old/outdated budget alert notifications
+        Notification.objects.filter(user=user, notification_type='BUDGET_ALERT').delete()
+
+def check_and_create_savings_milestone(user, goal):
+    if float(goal.target_amount) <= 0:
+        return
+    pct = (float(goal.current_amount) / float(goal.target_amount)) * 100
+    if pct >= 100:
+        exists = Notification.objects.filter(
+            user=user,
+            notification_type='SAVINGS_MILESTONE',
+            title=f"Goal Achieved: {goal.name}"
+        ).exists()
+        if not exists:
+            Notification.objects.create(
+                user=user,
+                notification_type='SAVINGS_MILESTONE',
+                title=f"Goal Achieved: {goal.name}",
+                message=f"Congratulations! You reached 100% of your target for '{goal.name}' (₹{float(goal.target_amount):,.2f})!"
+            )
+    elif pct >= 50:
+        exists = Notification.objects.filter(
+            user=user,
+            notification_type='SAVINGS_MILESTONE',
+            title=f"50% Milestone: {goal.name}"
+        ).exists()
+        if not exists:
+            Notification.objects.create(
+                user=user,
+                notification_type='SAVINGS_MILESTONE',
+                title=f"50% Milestone: {goal.name}",
+                message=f"Great progress! You crossed the 50% halfway milestone for '{goal.name}' (₹{float(goal.current_amount):,.2f} / ₹{float(goal.target_amount):,.2f})."
+            )
+
 
 class RegisterView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -37,6 +118,16 @@ class ExpenseViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
+        check_and_create_budget_alert(self.request.user)
+
+    def perform_update(self, serializer):
+        serializer.save()
+        check_and_create_budget_alert(self.request.user)
+
+    def perform_destroy(self, instance):
+        user = instance.user
+        instance.delete()
+        check_and_create_budget_alert(user)
 
 
 class IncomeViewSet(viewsets.ModelViewSet):
@@ -88,6 +179,7 @@ class BudgetViewSet(viewsets.ModelViewSet):
                         allocated_amount=float(amt)
                     )
 
+            check_and_create_budget_alert(request.user)
             serializer = self.get_serializer(budget)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -95,63 +187,108 @@ class BudgetViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
-# Naya SavingsGoalViewSet
 class SavingsGoalViewSet(viewsets.ModelViewSet):
     serializer_class = SavingsGoalSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        # Strict User Ownership Isolation
         return SavingsGoal.objects.filter(user=self.request.user).order_by('-created_at')
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        goal = serializer.save(user=self.request.user)
+        check_and_create_savings_milestone(self.request.user, goal)
+
+    def perform_update(self, serializer):
+        goal = serializer.save()
+        check_and_create_savings_milestone(self.request.user, goal)
 
 
-class DashboardSummaryView(APIView):
+class NotificationViewSet(viewsets.ModelViewSet):
+    serializer_class = NotificationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Notification.objects.filter(user=self.request.user).order_by('-created_at')
+
+    @action(detail=True, methods=['patch', 'post'])
+    def mark_read(self, request, pk=None):
+        notification = self.get_object()
+        notification.is_read = True
+        notification.save()
+        return Response({'status': 'marked as read'})
+
+    @action(detail=False, methods=['patch', 'post'])
+    def mark_all_read(self, request):
+        Notification.objects.filter(user=request.user, is_read=False).update(is_read=True)
+        return Response({'status': 'all marked as read'})
+
+    @action(detail=False, methods=['delete', 'post'])
+    def clear_all(self, request):
+        Notification.objects.filter(user=request.user).delete()
+        return Response({'status': 'all notifications cleared'})
+
+
+class AnalyticsSummaryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         user = request.user
         expenses = Expense.objects.filter(user=user)
         incomes = Income.objects.filter(user=user)
+        goals = SavingsGoal.objects.filter(user=user)
 
         total_income = sum(float(i.amount) for i in incomes)
         total_expense = sum(float(e.amount) for e in expenses)
-        remaining_amount = total_income - total_expense
+        net_savings = total_income - total_expense
+        savings_rate = round((net_savings / total_income * 100), 1) if total_income > 0 else 0.0
 
-        combined_activity = []
-        for e in expenses:
-            combined_activity.append({
-                'id': f"exp_{e.id}",
-                'original_id': e.id,
-                'title': e.title,
-                'amount': float(e.amount),
-                'category': e.category,
-                'type': 'EXPENSE',
-                'date': str(e.date),
-                'created_at': e.created_at.isoformat()
-            })
-
-        for i in incomes:
-            src = i.income_type or getattr(i, 'source', 'Pocket Money')
-            combined_activity.append({
-                'id': f"inc_{i.id}",
-                'original_id': i.id,
-                'title': src,
-                'amount': float(i.amount),
-                'category': src,
-                'type': 'INCOME',
-                'date': str(i.date),
-                'created_at': i.created_at.isoformat() if hasattr(i, 'created_at') else ''
-            })
-
-        combined_activity.sort(key=lambda x: x['date'], reverse=True)
+        budget = Budget.objects.filter(user=user).order_by('-year', '-month').first()
+        budget_limit = float(budget.total_amount) if budget else 0.0
+        budget_utilization = round((total_expense / budget_limit * 100), 1) if budget_limit > 0 else 0.0
 
         return Response({
             'total_income': total_income,
             'total_expenses': total_expense,
-            'remaining_amount': remaining_amount,
-            'recent_activity': combined_activity[:10],
-            'all_transactions': combined_activity
+            'net_savings': net_savings,
+            'savings_rate': max(0.0, savings_rate),
+            'budget_limit': budget_limit,
+            'budget_utilization': budget_utilization,
+            'active_savings_goals': goals.count(),
+            'completed_savings_goals': goals.filter(is_completed=True).count()
         })
+
+
+class ExportReportView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        response = HttpResponse(content_type='text/csv')
+        response['Content-Disposition'] = f'attachment; filename="BudgetBuddy_Financial_Report.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow(['BudgetBuddy Financial Summary Report'])
+        writer.writerow(['User', user.username])
+        writer.writerow(['Date Generated', datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')])
+        writer.writerow([])
+
+        expenses = Expense.objects.filter(user=user)
+        incomes = Income.objects.filter(user=user)
+        tot_inc = sum(float(i.amount) for i in incomes)
+        tot_exp = sum(float(e.amount) for e in expenses)
+
+        writer.writerow(['METRICS', 'AMOUNT (INR)'])
+        writer.writerow(['Total Income', f"{tot_inc:.2f}"])
+        writer.writerow(['Total Expenses', f"{tot_exp:.2f}"])
+        writer.writerow(['Net Balance', f"{(tot_inc - tot_exp):.2f}"])
+        writer.writerow([])
+
+        writer.writerow(['TRANSACTIONS LOG'])
+        writer.writerow(['Date', 'Type', 'Title / Source', 'Category', 'Amount (INR)'])
+
+        for inc in incomes.order_by('-date'):
+            writer.writerow([inc.date, 'INCOME', inc.income_type or inc.source, 'Income', f"+{inc.amount}"])
+        for exp in expenses.order_by('-date'):
+            writer.writerow([exp.date, 'EXPENSE', exp.title, exp.category, f"-{exp.amount}"])
+
+        return response

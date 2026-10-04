@@ -6,7 +6,9 @@ from .views import (
     IncomeViewSet, 
     BudgetViewSet, 
     SavingsGoalViewSet,
-    DashboardSummaryView,
+    NotificationViewSet,
+    AnalyticsSummaryView,
+    ExportReportView,
     RegisterView
 )
 
@@ -15,14 +17,17 @@ router.register(r'expenses', ExpenseViewSet, basename='expense')
 router.register(r'incomes', IncomeViewSet, basename='income')
 router.register(r'budgets', BudgetViewSet, basename='budget')
 router.register(r'savings-goals', SavingsGoalViewSet, basename='savings-goal')
+router.register(r'notifications', NotificationViewSet, basename='notification')
 
 urlpatterns = [
-    # Auth Endpoints
+    # Auth
     path('register/', RegisterView.as_view(), name='register'),
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 
-    # Data Endpoints
-    path('dashboard-data/', DashboardSummaryView.as_view(), name='dashboard-data'),
+    # Analytics & Reports
+    path('analytics/', AnalyticsSummaryView.as_view(), name='analytics-summary'),
+    path('export-report/', ExportReportView.as_view(), name='export-report'),
+
     path('', include(router.urls)),
 ]

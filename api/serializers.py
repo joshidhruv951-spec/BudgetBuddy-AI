@@ -5,6 +5,7 @@ from .models import (
     Budget, 
     CategoryBudget, 
     SavingsGoal,
+    Notification,
     EXPENSE_CATEGORIES, 
     INCOME_SOURCES
 )
@@ -151,7 +152,6 @@ class BudgetSerializer(serializers.ModelSerializer):
         return budget
 
 
-# Savings Goal Serializer with Progress % and Completion Logic
 class SavingsGoalSerializer(serializers.ModelSerializer):
     progress_percentage = serializers.SerializerMethodField()
 
@@ -192,3 +192,11 @@ class SavingsGoalSerializer(serializers.ModelSerializer):
         target = float(validated_data.get('target_amount', instance.target_amount))
         validated_data['is_completed'] = current >= target
         return super().update(instance, validated_data)
+
+
+# Notification Serializer
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ['id', 'notification_type', 'title', 'message', 'is_read', 'created_at']
+        read_only_fields = ['id', 'created_at']

@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.contrib.auth.models import User
 from .models import (
     Expense, 
     Income, 
@@ -9,6 +10,25 @@ from .models import (
     EXPENSE_CATEGORIES, 
     INCOME_SOURCES
 )
+
+# User Profile Serializer
+class UserProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'date_joined']
+        read_only_fields = ['id', 'username', 'date_joined']
+
+
+# Change Password Serializer
+class ChangePasswordSerializer(serializers.Serializer):
+    old_password = serializers.CharField(required=True)
+    new_password = serializers.CharField(required=True)
+
+    def validate_new_password(self, value):
+        if len(value) < 6:
+            raise serializers.ValidationError("New password must be at least 6 characters long.")
+        return value
+
 
 class ExpenseSerializer(serializers.ModelSerializer):
     class Meta:
@@ -194,7 +214,6 @@ class SavingsGoalSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 
-# Notification Serializer
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification

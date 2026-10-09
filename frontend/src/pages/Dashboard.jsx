@@ -94,6 +94,16 @@ function Dashboard() {
   const [budget, setBudget] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Profile Management State
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileTab, setProfileTab] = useState('INFO'); // 'INFO' or 'PASSWORD'
+  const [profileData, setProfileData] = useState({ username: '', email: '', date_joined: '' });
+  const [profileEmailInput, setProfileEmailInput] = useState('');
+  const [profileMessage, setProfileMessage] = useState({ type: '', text: '' });
+  const [oldPassword, setOldPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+
   // Notification Dropdown
   const [showNotifications, setShowNotifications] = useState(false);
 
@@ -146,11 +156,21 @@ function Dashboard() {
     }
   };
 
+  const fetchProfile = async () => {
+    try {
+      const res = await api.get('profile/');
+      setProfileData(res.data);
+      setProfileEmailInput(res.data.email || '');
+    } catch (err) {
+      console.error('Failed to fetch profile', err);
+    }
+  };
+
   useEffect(() => {
     loadData();
+    fetchProfile();
   }, []);
 
-  // Reliable Real-Time Calculations
   const totalIncome = incomes.reduce((acc, curr) => acc + parseFloat(curr.amount || 0), 0);
   const totalExpenses = expenses.reduce((acc, curr) => acc + parseFloat(curr.amount || 0), 0);
   const remainingBalance = totalIncome - totalExpenses;
@@ -158,7 +178,6 @@ function Dashboard() {
   const budgetUtilization = budgetAmount > 0 ? Math.round((totalExpenses / budgetAmount) * 100) : 0;
   const savingsRate = totalIncome > 0 ? Math.max(0, Math.round(((totalIncome - totalExpenses) / totalIncome) * 100)) : 0;
 
-  // Filtered notifications: agar expense budget ke 80% se kam hai toh purana fake warning filter kar dega
   const validNotifications = notifications.filter((n) => {
     if (n.notification_type === 'BUDGET_ALERT' && budgetUtilization < 80) {
       return false;
@@ -167,14 +186,12 @@ function Dashboard() {
   });
   const unreadCount = validNotifications.filter((n) => !n.is_read).length;
 
-  // Chart 1: Expense Breakdown
   const expenseChartData = EXPENSE_CATEGORIES.map((cat) => {
     const sum = expenses.filter((e) => e.category === cat).reduce((acc, e) => acc + parseFloat(e.amount || 0), 0);
     const pct = totalExpenses > 0 ? (sum / totalExpenses) * 100 : 0;
     return { label: cat, amount: sum, percentage: Math.round(pct), color: EXPENSE_COLORS[cat] };
   }).filter((item) => item.amount > 0);
 
-  // Chart 2: Income Breakdown
   const incomeChartData = INCOME_SOURCES.map((src) => {
     const sum = incomes
       .filter((i) => (i.income_type === src || i.source === src))
@@ -183,7 +200,6 @@ function Dashboard() {
     return { label: src, amount: sum, percentage: Math.round(pct), color: INCOME_COLORS[src] };
   }).filter((item) => item.amount > 0);
 
-  // Chart 3: Cash Flow
   const cashFlowChartData = [];
   if (totalIncome > 0) {
     const spentPct = Math.round((Math.min(totalExpenses, totalIncome) / totalIncome) * 100);
@@ -194,7 +210,6 @@ function Dashboard() {
     }
   }
 
-  // Monthly Trends (Last 6 Months calculation dynamically from user's transactions)
   const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const currentDateObj = new Date();
   const monthlyTrends = [];
@@ -227,7 +242,6 @@ function Dashboard() {
 
   const maxTrendVal = Math.max(...monthlyTrends.map((t) => Math.max(t.income, t.expense)), 1000);
 
-  // Edit handler
   const handleEdit = (item) => {
     setEditingId(item.id);
     setEditingType(item.type);
@@ -365,7 +379,6 @@ function Dashboard() {
     }
   };
 
-  // Instant Client-Side CSV Export (100% Reliable, Zero Network Dependency)
   const handleExportCSV = () => {
     try {
       let csvContent = "data:text/csv;charset=utf-8,";
@@ -403,7 +416,6 @@ function Dashboard() {
     }
   };
 
-  // Notification Actions
   const handleMarkAsRead = async (id) => {
     try {
       await api.post(`notifications/${id}/mark_read/`);
@@ -419,6 +431,47 @@ function Dashboard() {
       setNotifications([]);
     } catch (err) {
       setNotifications([]);
+    }
+  };
+
+  // Profile Update Handlers
+  const handleUpdateProfile = async (e) => {
+    e.preventDefault();
+    setProfileMessage({ type: '', text: '' });
+    try {
+      const res = await api.patch('profile/', { email: profileEmailInput });
+      setProfileData(res.data);
+      setProfileMessage({ type: 'success', text: 'Profile email updated successfully!' });
+    } catch (err) {
+      setProfileMessage({ type: 'error', text: err.response?.data?.email?.[0] || 'Failed to update profile.' });
+    }
+  };
+
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setProfileMessage({ type: '', text: '' });
+
+    if (newPassword !== confirmPassword) {
+      setProfileMessage({ type: 'error', text: 'New passwords do not match!' });
+      return;
+    }
+    if (newPassword.length < 6) {
+      setProfileMessage({ type: 'error', text: 'Password must be at least 6 characters long.' });
+      return;
+    }
+
+    try {
+      const res = await api.post('change-password/', {
+        old_password: oldPassword,
+        new_password: newPassword
+      });
+      setProfileMessage({ type: 'success', text: res.data.message || 'Password changed successfully!' });
+      setOldPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err) {
+      const msg = err.response?.data?.error || err.response?.data?.old_password?.[0] || 'Password change failed.';
+      setProfileMessage({ type: 'error', text: msg });
     }
   };
 
@@ -453,10 +506,33 @@ function Dashboard() {
       <div style={{ maxWidth: '1200px', margin: '0 auto 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
         <div>
           <h1 style={{ margin: 0, color: '#f8fafc', fontSize: '26px', fontWeight: '800' }}>BudgetBuddy</h1>
-          <p style={{ margin: '4px 0 0', color: '#94a3b8', fontSize: '14px' }}>Analytics Cockpit & Financial Dashboard</p>
+          <p style={{ margin: '4px 0 0', color: '#94a3b8', fontSize: '14px' }}>
+            Welcome, <strong style={{ color: '#38bdf8' }}>{profileData.username || 'User'}</strong> • Financial Cockpit
+          </p>
         </div>
         
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', position: 'relative' }}>
+          {/* User Profile Button */}
+          <button
+            onClick={() => { setShowProfileModal(true); setProfileMessage({ type: '', text: '' }); }}
+            title="User Profile & Settings"
+            style={{
+              backgroundColor: '#131b2e',
+              border: '1px solid #334155',
+              color: '#cbd5e1',
+              padding: '8px 12px',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontWeight: '600',
+              fontSize: '13px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            👤 Profile
+          </button>
+
           {/* Export Report */}
           <button
             onClick={handleExportCSV}
@@ -584,7 +660,7 @@ function Dashboard() {
       </div>
 
       <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        {/* Top Summary Cards (Clean: No + or - signs) */}
+        {/* Top Summary Cards */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
           <div style={{ backgroundColor: '#131b2e', border: '1px solid #1e293b', padding: '20px', borderRadius: '12px' }}>
             <span style={{ color: '#4ade80', fontSize: '12px', fontWeight: 'bold', letterSpacing: '0.5px' }}>TOTAL INCOME</span>
@@ -901,6 +977,154 @@ function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* User Profile & Password Modal */}
+      {showProfileModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div style={{ backgroundColor: '#131b2e', border: '1px solid #334155', padding: '28px', borderRadius: '14px', width: '90%', maxWidth: '440px', boxShadow: '0 10px 30px rgba(0,0,0,0.6)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3 style={{ margin: 0, color: '#f8fafc', fontSize: '18px' }}>👤 User Profile Management</h3>
+              <button onClick={() => setShowProfileModal(false)} style={{ background: 'none', border: 'none', color: '#94a3b8', fontSize: '18px', cursor: 'pointer' }}>✕</button>
+            </div>
+
+            {/* Profile Tabs */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', borderBottom: '1px solid #1e293b', paddingBottom: '10px' }}>
+              <button
+                type="button"
+                onClick={() => { setProfileTab('INFO'); setProfileMessage({ type: '', text: '' }); }}
+                style={{
+                  flex: 1,
+                  padding: '8px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  backgroundColor: profileTab === 'INFO' ? '#2563eb' : '#1e293b',
+                  color: profileTab === 'INFO' ? '#fff' : '#94a3b8'
+                }}
+              >
+                Profile Info
+              </button>
+              <button
+                type="button"
+                onClick={() => { setProfileTab('PASSWORD'); setProfileMessage({ type: '', text: '' }); }}
+                style={{
+                  flex: 1,
+                  padding: '8px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  fontWeight: '600',
+                  cursor: 'pointer',
+                  fontSize: '13px',
+                  backgroundColor: profileTab === 'PASSWORD' ? '#2563eb' : '#1e293b',
+                  color: profileTab === 'PASSWORD' ? '#fff' : '#94a3b8'
+                }}
+              >
+                Change Password
+              </button>
+            </div>
+
+            {/* Feedback Message */}
+            {profileMessage.text && (
+              <div style={{
+                marginBottom: '16px',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                fontSize: '13px',
+                backgroundColor: profileMessage.type === 'success' ? '#064e3b44' : '#7f1d1d44',
+                color: profileMessage.type === 'success' ? '#34d399' : '#f87171',
+                border: `1px solid ${profileMessage.type === 'success' ? '#059669' : '#ef4444'}`
+              }}>
+                {profileMessage.text}
+              </div>
+            )}
+
+            {/* Tab 1: Profile Info Form */}
+            {profileTab === 'INFO' ? (
+              <form onSubmit={handleUpdateProfile} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: '#94a3b8', marginBottom: '6px' }}>USERNAME (READ ONLY)</label>
+                  <input type="text" disabled value={profileData.username || ''} style={{ ...darkInputStyle, backgroundColor: '#1e293b', cursor: 'not-allowed', color: '#94a3b8' }} />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: '#cbd5e1', marginBottom: '6px' }}>EMAIL ADDRESS</label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="Enter email"
+                    value={profileEmailInput}
+                    onChange={(e) => setProfileEmailInput(e.target.value)}
+                    style={darkInputStyle}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: '#94a3b8', marginBottom: '6px' }}>ACCOUNT CREATED</label>
+                  <input
+                    type="text"
+                    disabled
+                    value={profileData.date_joined ? new Date(profileData.date_joined).toLocaleDateString() : 'Active Member'}
+                    style={{ ...darkInputStyle, backgroundColor: '#1e293b', cursor: 'not-allowed', color: '#94a3b8' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                  <button type="submit" style={{ flex: 1, backgroundColor: '#2563eb', color: '#fff', padding: '10px', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
+                    Save Profile
+                  </button>
+                  <button type="button" onClick={() => setShowProfileModal(false)} style={{ flex: 1, backgroundColor: '#334155', color: '#cbd5e1', padding: '10px', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+                    Close
+                  </button>
+                </div>
+              </form>
+            ) : (
+              /* Tab 2: Change Password Form */
+              <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: '#cbd5e1', marginBottom: '6px' }}>CURRENT PASSWORD</label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Enter current password"
+                    value={oldPassword}
+                    onChange={(e) => setOldPassword(e.target.value)}
+                    style={darkInputStyle}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: '#cbd5e1', marginBottom: '6px' }}>NEW PASSWORD</label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Minimum 6 characters"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    style={darkInputStyle}
+                  />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', color: '#cbd5e1', marginBottom: '6px' }}>CONFIRM NEW PASSWORD</label>
+                  <input
+                    type="password"
+                    required
+                    placeholder="Re-type new password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    style={darkInputStyle}
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                  <button type="submit" style={{ flex: 1, backgroundColor: '#059669', color: '#fff', padding: '10px', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>
+                    Update Password
+                  </button>
+                  <button type="button" onClick={() => setShowProfileModal(false)} style={{ flex: 1, backgroundColor: '#334155', color: '#cbd5e1', padding: '10px', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+                    Close
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Savings Goal Modal */}
       {showGoalModal && (

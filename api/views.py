@@ -12,20 +12,18 @@ from .serializers import (
     IncomeSerializer, 
     BudgetSerializer,
     SavingsGoalSerializer,
-    NotificationSerializer
+    NotificationSerializer,
+    UserProfileSerializer,
+    ChangePasswordSerializer
 )
 
-# Intelligent Auto-Reconciling Notification Trigger
+# Automated Notification Triggers
 def check_and_create_budget_alert(user):
     budget = Budget.objects.filter(user=user).order_by('-year', '-month').first()
     if not budget or float(budget.total_amount) <= 0:
         return
 
-    # Total expenses for active tracking
-    now = datetime.date.today()
-    total_exp = sum(
-        float(e.amount) for e in Expense.objects.filter(user=user)
-    )
+    total_exp = sum(float(e.amount) for e in Expense.objects.filter(user=user))
     budget_limit = float(budget.total_amount)
     ratio = total_exp / budget_limit
 
@@ -56,7 +54,6 @@ def check_and_create_budget_alert(user):
                 message=f"Warning: You have reached 80% of your budget limit (₹{total_exp:,.2f} spent of ₹{budget_limit:,.2f})."
             )
     else:
-        # If expenses are below 80%, remove any old/outdated budget alert notifications
         Notification.objects.filter(user=user, notification_type='BUDGET_ALERT').delete()
 
 def check_and_create_savings_milestone(user, goal):
@@ -89,6 +86,41 @@ def check_and_create_savings_milestone(user, goal):
                 title=f"50% Milestone: {goal.name}",
                 message=f"Great progress! You crossed the 50% halfway milestone for '{goal.name}' (₹{float(goal.current_amount):,.2f} / ₹{float(goal.target_amount):,.2f})."
             )
+
+
+# User Profile & Password Change Views
+class UserProfileView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        serializer = UserProfileSerializer(request.user)
+        return Response(serializer.data)
+
+    def patch(self, request):
+        serializer = UserProfileSerializer(request.user, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ChangePasswordView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data)
+        if serializer.is_valid():
+            user = request.user
+            old_pwd = serializer.validated_data['old_password']
+            new_pwd = serializer.validated_data['new_password']
+
+            if not user.check_password(old_pwd):
+                return Response({'error': 'Incorrect current password.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            user.set_password(new_pwd)
+            user.save()
+            return Response({'message': 'Password updated successfully! Please login again if needed.'})
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class RegisterView(APIView):
